@@ -27,14 +27,11 @@ services:
       - ../../common/init:/docker-entrypoint-initdb.d
 
   twin-node:
-    # Published image. next.67 bakes twin-node 0.0.3-next.67, dataspace
-    # control+data-plane+models 0.0.3-next.55, federated-catalogue 0.0.3-next.24
-    # (bumped from .23), engine-core 0.0.3-next.56, rights-management/core 0.9.0-next.1.
-    # NOTE: the @next dist-tag jumped to 0.9.0-next.1 for dataspace/fedcat/engine, but the
-    # extensions' floating "next" deps still resolve to the image-aligned 0.0.3 line via
-    # dependency-graph constraints, so build + runtime stay consistent with this image.
-    # Verified against the pulled image 2026-06-24. Bump the tag to pin a newer build.
-    image: twinfoundation/twin-node:0.0.3-next.67
+    # Published image. 0.9.1-next.2 is the latest next-line build: twin-node 0.9.1-next.2,
+    # dataspace control+data-plane 0.9.1-next.4, federated-catalogue / rights-management-pnp
+    # 0.9.1-next.2, core 0.9.1-next.5. The npm "next" tag tracks this line, so the extensions
+    # use "next" deps; "latest" = 0.9.0 (the older stable). Verified against the pulled image 2026-06-29.
+    image: twinfoundation/twin-node:0.9.1-next.2
     # Local build (only needed when Docker Hub lags the refactor — kept for reference):
     # build:
     #   context: ../../../twin-node

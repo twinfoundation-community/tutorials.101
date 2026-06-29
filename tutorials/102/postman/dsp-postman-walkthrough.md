@@ -11,7 +11,7 @@
 > - **C6:** `data_endpoint` arrives with `?organization=<provider-org-did>` baked by the catalogue/control-plane (cleartext — the encrypted-token URL-mangling pitfall is moot).
 > - **C-shortcut:** now a **two-call** extension API: `POST /consumer-client/negotiate {datasetId}` returns `{agreementId}`, then `POST /consumer-client/query-data {agreementId, entityType}` returns the data. It runs end-to-end only when `TWIN_DATASPACE_AUTO_START_TRANSFERS="true"` (the default; the provider auto-starts so the extension's awaited `onStarted` callback fires). The old single-call `GET /query-data` + MySQL SELECT is superseded.
 > - **Auto-start (2026-06-23):** the automated C-shortcut (Way 1) and this manual walkthrough (Way 2) need **opposite** `TWIN_DATASPACE_AUTO_START_TRANSFERS` values. Way 1 needs `"true"`; **this manual walkthrough needs `"false"`** so the provider does NOT auto-start and C5 `start` returns the data address synchronously. Flip it in `.env.multitenant` and `docker compose up -d` (no rebuild).
-> - **Docker image:** as of 2026-06-23 docker-compose uses the **published** image `twinfoundation/twin-node:0.0.3-next.66` (bakes dataspace control+data-plane+models `0.0.3-next.55` incl. the implicit-trust cross-org fix, engine-core `0.0.3-next.56`, rights-management-pap `0.9.0-next.1`, federated-catalogue `0.0.3-next.23`, core `0.9.0-next.1`; verified inside the pulled image). The tutorial-side fixes are the single-node corrections in `apps/consumer-client` and `apps/dataspace-example-app`.
+> - **Docker image:** as of 2026-06-29 docker-compose uses the **published** image `twinfoundation/twin-node:0.9.1-next.2` (bakes dataspace control+data-plane `0.9.1-next.4`, federated-catalogue / rights-management-pnp `0.9.1-next.2`, core `0.9.1-next.5`; verified inside the pulled image). The tutorial-side fixes are the single-node corrections in `apps/consumer-client` and `apps/dataspace-example-app`, plus (required on `0.9.1-next.x`) building the extensions with `./build-extensions.sh`, which builds both apps and strips their bundled `@twin.org/*` so they use the host image's packages; without that strip the node fails to start with `context ID "node" is missing`.
 > - **C1 bearer:** the catalogue query uses the trust VC `{{cons_trust_jwt}}`, not the session JWT (the `#194` trust model). `trustHelper.trustVerifyFailed` means you sent the session JWT.
 
 
@@ -38,7 +38,7 @@ This is the same architectural pattern as OAuth 2.0 — pure HTTP tools can comp
 
 ## Prerequisites
 
-- `tutorials/102` node running: `cd tutorials/102 && docker compose up -d`
+- `tutorials/102` node running: `cd tutorials/102 && ./build-extensions.sh && docker compose up -d` (`build-extensions.sh` builds both apps and strips their bundled `@twin.org/*`, required on `0.9.1-next.x`)
 - `.env.local` has the two rights-management env vars set:
   ```sh
   TWIN_RIGHTS_MANAGEMENT_POLICY_ARBITERS="pass-through"

@@ -15,8 +15,8 @@ This README is the manual companion: every request, every header, every body, ev
 
 ## Prerequisites
 
-- `tutorials/102` node up via `docker compose up -d` (provider + consumer tenants bootstrapped with org DIDs via `twin-node.sh` + `onboard-org.sh`).
-- The published image `twinfoundation/twin-node:0.0.3-next.66` (or newer) bakes dataspace `0.0.3-next.55` (incl. the implicit-trust cross-org fix), engine-core `0.0.3-next.56`, and core `0.9.0-next.1`.
+- `tutorials/102` node up via `./build-extensions.sh && docker compose up -d` (`build-extensions.sh` builds the apps + strips bundled `@twin.org/*`; provider + consumer tenants bootstrapped with org DIDs via `twin-node.sh` + `onboard-org.sh`).
+- The published image `twinfoundation/twin-node:0.9.1-next.2` (or newer) bakes all `@twin.org/*` on the `0.9.1-next` line (dataspace `0.9.1-next.4`, core `0.9.1-next.5`). On `0.9.1-next.x` the extensions must use the host's `@twin.org/*` at runtime: build them with `./build-extensions.sh` (it strips the bundled copies), else the node fails to start (`context ID "node" is missing`).
 - `common/.env.local` has the two rights-management env vars (else the data-pull leg returns `noArbiters` / `noProcessors`):
   ```sh
   TWIN_RIGHTS_MANAGEMENT_POLICY_ARBITERS="pass-through"
