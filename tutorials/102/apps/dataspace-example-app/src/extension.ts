@@ -1,6 +1,7 @@
 // Copyright 2025 IOTA Stiftung.
 // SPDX-License-Identifier: Apache-2.0.
 import type { IRestRoute } from "@twin.org/api-models";
+import { Is } from "@twin.org/core";
 import { DataspaceAppFactory } from "@twin.org/dataspace-models";
 import type {
 	EngineTypeInitialiserReturn,
@@ -25,7 +26,11 @@ export async function extensionInitialise(
 	nodeEngineConfig.types.testAppComponent = [
 		{
 			type: "service",
-			options: {}
+			options: {
+				consignments: Is.arrayValue(envVars.testAppConsignments)
+					? envVars.testAppConsignments
+					: undefined
+			}
 		}
 	];
 }

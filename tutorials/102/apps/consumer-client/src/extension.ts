@@ -65,7 +65,20 @@ export async function extensionInitialise(
 				// (<publicOrigin>/<callbackPath>) points at its own control-plane mount; otherwise the
 				// provider POSTs transfer callbacks (e.g. the auto-start TransferStartMessage) to the wrong
 				// path and the consumer 404s.
-				config: { callbackPath: "dataspace" }
+				//
+				// This config object REPLACES the env-built control-plane config, so dataPlanePath and
+				// autoStartTransfers must be forwarded here too. Without dataPlanePath, pull transfers fail
+				// with "pullTransfersNotSupported"; without autoStartTransfers=true the provider never
+				// auto-starts the transfer, so the automated consumer-client (Way 1) hangs waiting for
+				// onStarted. Set TWIN_DATASPACE_AUTO_START_TRANSFERS=false for the manual Postman/curl
+				// walkthrough (Way 2) so the explicit ".../start" returns the data address synchronously.
+				config: {
+					callbackPath: "dataspace",
+					// eslint-disable-next-line no-restricted-syntax -- tutorial extension reads node env directly
+					dataPlanePath: process.env.TWIN_DATASPACE_DATA_PLANE_PATH ?? "dataspace",
+					// eslint-disable-next-line no-restricted-syntax -- tutorial extension reads node env directly
+					autoStartTransfers: process.env.TWIN_DATASPACE_AUTO_START_TRANSFERS !== "false"
+				}
 			},
 			restPath: "dataspace",
 			isDefault: true

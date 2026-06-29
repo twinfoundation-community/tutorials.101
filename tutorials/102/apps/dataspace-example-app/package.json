@@ -24,7 +24,7 @@
 		"@twin.org/core": "next",
 		"@twin.org/data-core": "next",
 		"@twin.org/data-json-ld": "next",
-		"@twin.org/dataspace-models": "^0.0.3-next.38",
+		"@twin.org/dataspace-models": "next",
 		"@twin.org/engine-models": "next",
 		"@twin.org/engine-types": "next",
 		"@twin.org/logging-models": "next",
@@ -32,10 +32,7 @@
 		"@twin.org/standards-dataspace-protocol": "next",
 		"@twin.org/standards-w3c-activity-streams": "next",
 		"@twin.org/standards-dublin-core": "next",
-		"@twin.org/auditable-item-graph-models": "next",
-		"@twin.org/entity": "next",
-		"@twin.org/standards-schema-org": "next",
-		"@twin.org/standards-unece": "next"
+		"@twin.org/auditable-item-graph-models": "next"
 	},
 	"devDependencies": {
 		"@twin.org/nameof-transformer": "next",

@@ -1,13 +1,17 @@
 # Tutorial 102 — DSP Pull-Mode Postman Walkthrough
 
+> Created: 2026-06-11
+> Last updated: 2026-06-29
+
 > **⚠️ #203 update (organization identifiers, 2026-06-11).** This walkthrough and the collection in `postman/` have been migrated to the org-identifiers refactor (twin-node#19 / PR #203) and re-verified end-to-end via curl. What changed:
 > - **Routing:** `x-api-key` works ONLY on `/authentication/login` (A1/B1). Every other request is tenant-routed by `?organization=<org-did>` — the collection now uses `{{prov_did}}` / `{{cons_did}}` there. Encrypted tenant tokens (`x-enc-tenant-token`, `prov_tenant_token`/`cons_tenant_token` env vars) are GONE.
 > - **DIDs:** `prov_did` / `cons_did` are now each tenant's OWN organization DID (created via `tenant-create --organization-id`), no longer one shared node DID. Trust JWTs (A2/B2) are minted against these org DIDs and are identity-only (no `tid`/`org` claims).
 > - **C1:** filter type is `FilterByMetadata` (was `FilterByExample`).
 > - **C5:** `?organization={{prov_did}}` replaces the tenant token; the old "grab prov_tenant_token from the node log" hack is gone.
 > - **C6:** `data_endpoint` arrives with `?organization=<provider-org-did>` baked by the catalogue/control-plane (cleartext — the encrypted-token URL-mangling pitfall is moot).
-> - **C-shortcut:** unchanged usage, but the HTTP call may hang until C5 starts the transfer (the extension now awaits the started transfer); the MySQL SELECT for the pids works as before — let the request time out and carry on.
-> - **Docker image:** as of 2026-06-16 docker-compose uses the **published** image `twinfoundation/twin-node:0.0.3-next.56` (carries node-core next.56, rights-management-pnp next.51 = fix #181, federated-catalogue next.21 = fix #88). Both platform bugs found during this migration are now fixed upstream and published; the only tutorial-side fix is the consumer-client extension forwarding `dataPlanePath`. Full record: [`next53-org-identifiers-migration-and-findings.md`](./next53-org-identifiers-migration-and-findings.md).
+> - **C-shortcut:** now a **two-call** extension API: `POST /consumer-client/negotiate {datasetId}` returns `{agreementId}`, then `POST /consumer-client/query-data {agreementId, entityType}` returns the data. It runs end-to-end only when `TWIN_DATASPACE_AUTO_START_TRANSFERS="true"` (the default; the provider auto-starts so the extension's awaited `onStarted` callback fires). The old single-call `GET /query-data` + MySQL SELECT is superseded.
+> - **Auto-start (2026-06-23):** the automated C-shortcut (Way 1) and this manual walkthrough (Way 2) need **opposite** `TWIN_DATASPACE_AUTO_START_TRANSFERS` values. Way 1 needs `"true"`; **this manual walkthrough needs `"false"`** so the provider does NOT auto-start and C5 `start` returns the data address synchronously. Flip it in `.env.multitenant` and `docker compose up -d` (no rebuild).
+> - **Docker image:** as of 2026-06-29 docker-compose uses the **published** image `twinfoundation/twin-node:0.9.1-next.2` (bakes dataspace control+data-plane `0.9.1-next.4`, federated-catalogue / rights-management-pnp `0.9.1-next.2`, core `0.9.1-next.5`; verified inside the pulled image). The tutorial-side fixes are the single-node corrections in `apps/consumer-client` and `apps/dataspace-example-app`, plus (required on `0.9.1-next.x`) building the extensions with `./build-extensions.sh`, which builds both apps and strips their bundled `@twin.org/*` so they use the host image's packages; without that strip the node fails to start with `context ID "node" is missing`.
 > - **C1 bearer:** the catalogue query uses the trust VC `{{cons_trust_jwt}}`, not the session JWT (the `#194` trust model). `trustHelper.trustVerifyFailed` means you sent the session JWT.
 
 
@@ -24,9 +28,9 @@ By the end you'll have:
 ## TL;DR
 
 - **Setup, full flow C5–C6, fetching data**: all 100% Postman. ✅
-- **The CALLBACK-based negotiation (C2/C3)**: still NOT possible from Postman — the consumer-side state machine must be bootstrapped in-process (re-confirmed in code on next.53). ❌
-- **2026-06-12 update (verified on next.53): the POLLING path makes the ENTIRE flow 100% Postman-able** — C2′ → C3a′–e′ → C3f′ (fetch agreement via provider admin route) → C4 (works given a real `agreement_id`; `callbackAddress` is schema-required in the body) → C5 → C6. ✅
-- **The C-shortcut** (`GET /consumer-client/query-data` + MySQL `SELECT`) remains as a convenience for the callback-style flow, but is no longer a necessity.
+- **The CALLBACK-based negotiation (C2/C3)**: still NOT possible from Postman — the consumer-side state machine must be bootstrapped in-process (architecture unchanged through next.66). ❌
+- **Re-verified on next.66: the POLLING path makes the ENTIRE flow 100% Postman-able** — C2′ → C3a′–e′ → C3f′ (fetch agreement via provider admin route) → C4 (works given a real `agreement_id`; `callbackAddress` is schema-required in the body) → C5 → C6. ✅
+- **The C-shortcut** is now a two-call extension API (`POST /consumer-client/negotiate` → `POST /consumer-client/query-data`) and needs `TWIN_DATASPACE_AUTO_START_TRANSFERS="true"`. This manual walkthrough (Way 2) instead needs it `"false"`.
 
 This is the same architectural pattern as OAuth 2.0 — pure HTTP tools can complete pieces of the dance, but the consumer needs a real client app that holds session state and registers callbacks.
 
@@ -34,13 +38,14 @@ This is the same architectural pattern as OAuth 2.0 — pure HTTP tools can comp
 
 ## Prerequisites
 
-- `tutorials/102` node running: `cd tutorials/102 && docker compose up -d`
+- `tutorials/102` node running: `cd tutorials/102 && ./build-extensions.sh && docker compose up -d` (`build-extensions.sh` builds both apps and strips their bundled `@twin.org/*`, required on `0.9.1-next.x`)
 - `.env.local` has the two rights-management env vars set:
   ```sh
   TWIN_RIGHTS_MANAGEMENT_POLICY_ARBITERS="pass-through"
   TWIN_RIGHTS_MANAGEMENT_POLICY_ENFORCEMENT_PROCESSORS="pass-through"
   ```
-- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace/entities"` (else C5 → `pullTransfersNotSupported`).
+- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` (else C5 → `pullTransfersNotSupported`).
+- `.env.multitenant` has **`TWIN_DATASPACE_AUTO_START_TRANSFERS="false"`** for this manual walkthrough, so the provider does not auto-start and C5 `start` returns the data address synchronously. (Leave it `"true"`, the default, only for the automated C-shortcut.) Change it and `docker compose up -d` to apply, no rebuild needed.
 - Postman collection + environment imported from `tutorials/102/postman/`. See `postman/README.md` for the per-request reference.
 
 ---
@@ -79,11 +84,11 @@ These are populated by the auto-extraction scripts as you run the flow — leave
 | **A1–A4** | Postman | Login as provider, mint trust JWT, create offer, register dataset |
 | **B1–B2** | Postman | Login as consumer, mint trust JWT |
 | **C1** | Postman | Query the federated catalogue (proves the dataset is discoverable) |
-| **C-shortcut** | Postman + Terminal | `GET /consumer-client/query-data` + MySQL `SELECT` for the resulting PIDs |
-| **C5** | Postman | `POST /transfers/:pid/start` — provider returns access endpoint + bearer token |
+| **C-shortcut** | Postman | `POST /consumer-client/negotiate` then `POST /consumer-client/query-data` (Way 1; needs auto-start `"true"`) |
+| **C5** | Postman | `POST /transfers/:pid/start` — provider returns access endpoint + bearer token (Way 2; needs auto-start `"false"`) |
 | **C6** | Postman | `GET /dataspace/entities` — actual data flowing from provider to consumer |
 
-C2/C3 in the collection are kept for reference only — they show the correct callback-style DSP shape but fail with `negotiationNotFound` because they require consumer-side state that no REST endpoint can create (re-confirmed in code on next.53). C4 DOES work from Postman when fed a real `agreement_id` — use the C-poll path below to obtain one. See [why](#why-c2c3c4-arent-100-postman-able).
+C2/C3 in the collection are kept for reference only — they show the correct callback-style DSP shape but fail with `negotiationNotFound` because they require consumer-side state that no REST endpoint can create (architecture unchanged through next.66). C4 DOES work from Postman when fed a real `agreement_id` — use the C-poll path below to obtain one. See [why](#why-c2c3c4-arent-100-postman-able).
 
 A `C-poll` folder drives the **negotiation phase** end-to-end from Postman by omitting `callbackAddress` and polling the provider — requires `rights-management-pnp-service` >= `0.0.3-next.41`. See [Polling-only path for the negotiation phase](#polling-only-path-for-the-negotiation-phase-rights-management--003-next41) for what it does and does not unlock.
 
@@ -105,7 +110,8 @@ Most requests in the collection have a **Post-response script** (Scripts tab in 
 | **C2. Initiate negotiation** | `negotiation_id` | `response.providerPid` | C3 |
 | **C3. Poll until FINALIZED** | `agreement_id` (when state is FINALIZED) | `response.agreement["@id"]` | C4 |
 | **C4. Request transfer** | `consumer_pid`, `provider_pid`, `provider_pid_enc` | pre-request UUID for consumer, `response.providerPid` for provider | C5 |
-| **C-shortcut. consumer-client/query-data** | (nothing — extension stores result in MySQL) | — | (you populate `consumer_pid` / `provider_pid` / `provider_pid_enc` by hand from the SELECT) |
+| **C-shortcut-1. Negotiate** | `agreement_id` | `response.agreementId` | C-shortcut-2 |
+| **C-shortcut-2. Query data** | (nothing, returns the ItemList) | — | — |
 | **C5. Start transfer** | `data_endpoint`, `access_token` | `response.dataAddress.endpoint` and `response.dataAddress.endpointProperties[name=="authorization"].value` | C6 |
 | **C6. Fetch data** | (nothing — terminal step) | — | — |
 
@@ -130,9 +136,11 @@ A few things to know:
 | **A1. Login as provider** | `POST /authentication/login?x-api-key={{prov_api_key}}` with `{email, password}` | `prov_session_jwt` (from `Set-Cookie`) |
 | **A2. Mint provider trust JWT** | `POST /identity/{{prov_did}}/verifiable-credential/trust-assertion` with `{subject:{id:{{prov_did}}}}` | `prov_trust_jwt` (from `response.jwt`) |
 | **A3. Create ODRL Offer** *(skip if exists)* | `POST /rights-management/policy/admin` with the Offer body | — |
-| **A4. Register Dataset** *(skip if exists)* | `POST /dataspace-control-plane/app-datasets` with the dataset body | — |
+| **A4. Register Dataset** *(skip if exists)* | `POST /dataspace/app-datasets` with the dataset body | — |
 
 If A3 returns `"1"` or A4 returns `datasetAlreadyExists` — both fine, you already bootstrapped on a previous run. Move on.
+
+> The provider serves a **static in-memory** consignments dataset (the platform's `dataspace-test-app` pattern); A4 only registers the dataset's catalogue metadata and policy. There is no data-ingestion step and the provider does not query an AIG.
 
 ### B. Consumer setup (one-time)
 
@@ -166,47 +174,40 @@ Confirms the consumer can see the dataset in the catalogue. Returns a `Catalog` 
 
 #### C2/C3/C4 — the shortcut
 
-Instead of running C2 (initiate negotiation), C3 (poll for FINALIZED), C4 (request transfer) from Postman, do this:
+Instead of running C2 (initiate negotiation), C3 (poll for FINALIZED), C4 (request transfer) from Postman, the `consumer-client` extension exposes a **two-call** API that drives the whole negotiation + transfer + fetch in-process. This is **Way 1**, and it needs `TWIN_DATASPACE_AUTO_START_TRANSFERS="true"` (the default).
 
-**Step 1 — In Postman, send:**
+**Step 1 — `C-shortcut-1. Negotiate`:**
 
 ```http
-GET /consumer-client/query-data?organization={{cons_did}}
+POST /consumer-client/negotiate?organization={{cons_did}}
+{ "datasetId": "{{dataset_type}}" }
 ```
 
-Expect `200 OK` with body `{}`. The tutorial's `consumer-client` extension just ran the entire negotiation + transfer-request flow in-process inside the node. It doesn't return the IDs in the response — they live in MySQL now.
+Expect `200 OK` with `{ "agreementId": "..." }`; the test script saves it to `agreement_id`. The extension ran the entire DSP negotiation (request, offer, accept, agree, verify, finalize) in-process.
 
-**Step 2 — In your terminal, run:**
+> The `datasetId` field carries the dataset **type** (`dataset_type`), not the dataset IRI; the consumer-client uses it as the `FilterByMetadata` `dcterms:type` value for the catalogue lookup.
 
-```bash
-docker exec mysql8_container mysql -utwin -ptwin twin -e \
-  "SELECT consumerPid, providerPid FROM \`transfer-process\` WHERE state='REQUESTED' ORDER BY dateCreated DESC LIMIT 1;"
+**Step 2 — `C-shortcut-2. Query data`:**
+
+```http
+POST /consumer-client/query-data?organization={{cons_did}}
+{ "agreementId": "{{agreement_id}}", "entityType": "{{dataset_type}}" }
 ```
 
-Output looks like:
-```
-consumerPid                                    providerPid
-urn:uuid:5994733a-2d8c-4542-8657-aa694a5d88ef  urn:uuid:019e8557-6c2e-74ce-92f9-fa9a217b9f71
-```
+Expect `200 OK` with an `ItemList` of two `Consignment` entities. The extension requested the transfer, waited for the provider to auto-start it, and fetched the data-plane channel, all in-process. No MySQL `SELECT` and no manual C5 are needed.
 
-**Step 3 — In Postman, open the environment (eye icon → Edit) and set the Current values:**
+> **How the pull happens:** the consumer-client fetches through the data-plane `RestClient` (created with `pathPrefix:""`). Because the node sets `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` (the data-plane base), the client resolves `/dataspace/entities`. There is no manual direct-fetch workaround.
 
-| Variable | Value |
-|---|---|
-| `consumer_pid` | the `consumerPid` from MySQL |
-| `provider_pid` | the `providerPid` from MySQL |
-| `provider_pid_enc` | the providerPid with `:` → `%3A` (e.g. `urn%3Auuid%3A019e8557-...`) |
+> **Why this works:** the `consumer-client` extension is a custom REST surface that internally calls `dataspaceControlPlane.negotiateAgreement(...)` then `prepareTransfer(...)`, in-process methods that bootstrap consumer-side state (negotiation + transfer-process rows, registered callbacks) before talking to the provider over HTTP. `negotiate` resolves when the negotiation FINALIZES; `query-data` resolves when the auto-started transfer reaches STARTED and the data is fetched.
 
-Save the environment.
+> **Why it needs auto-start:** `query-data` passively waits for the in-process `onStarted` callback, so the provider must auto-start the transfer (`TWIN_DATASPACE_AUTO_START_TRANSFERS="true"`). The manual C5 path (Way 2) needs the opposite value; see the auto-start note at the top.
 
-> **Why this works:** the `consumer-client` extension is a custom REST endpoint that internally calls `dataspaceControlPlane.negotiateAgreement(...)` and `dataspaceControlPlane.requestTransfer(...)` — both of which are in-process methods that bootstrap consumer-side state (creating `policy-negotiation` and `transfer-process` rows, registering callbacks) before talking to the provider over HTTP. By the time the GET returns 200, the negotiation has completed and the transfer-process row is sitting in REQUESTED state.
-
-> **Why you couldn't do this from Postman alone:** see [the section below](#why-c2c3c4-arent-100-postman-able).
+> **Why you couldn't do the callback-style C2/C3 from Postman alone:** see [the section below](#why-c2c3c4-arent-100-postman-able).
 
 #### C5. Start the transfer (Postman)
 
 ```http
-POST /dataspace-control-plane/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
+POST /dataspace/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
 Authorization: Bearer {{prov_trust_jwt}}     ← ⚠️ PROVIDER trust JWT, not consumer's; routing is ?organization={{prov_did}} (not x-api-key)
 
 {
@@ -229,18 +230,12 @@ Response is a `TransferStartMessage` with `dataAddress.endpoint` and an `authori
 
 #### C6. Fetch the data (Postman)
 
-In Postman, open C6. The URL bar should be exactly:
-
-```
-{{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
-```
-
-⚠️ **Params tab must be empty.** Do NOT specify `consumerPid` or `type` in the structured params — only in the raw URL. (See [URL mangling pitfall](#pitfall-postmans-structured-url-mangles-encrypted-tokens) below.)
-
 ```http
-GET {{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
+GET {{base}}/dataspace/entities?organization={{prov_did}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
 Authorization: Bearer {{access_token}}    ← from C5's dataAddress, NOT a session JWT
 ```
+
+> The transfer advertises the data-plane **base** endpoint (`…/dataspace?organization=…`); the `entities` route is appended to reach the data, so C6 GETs `/dataspace/entities` explicitly.
 
 Expect HTTP 200 with a `schema.org` `ItemList` containing two `Consignment` entities (Rotterdam → Felixstowe and Le Havre → Dover, per the seed data in `dataspace-example-app`).
 
@@ -352,7 +347,7 @@ Consumer (Postman)                           Provider PNP (local)
 
 Because no callback is ever sent to the consumer, the consumer-side `pnap.get(consumerPid)` lookup (the original `negotiationNotFound` blocker above) is never exercised. The provider's PNP holds the full state and the consumer drives the protocol events via REST.
 
-**Scope (updated 2026-06-12, verified end-to-end on next.53).** The polling path now covers the **full pull flow**, not just negotiation: the public `GET /negotiations/:id` is DSP-spec-minimal (pids + state, no agreement), so fetch the agreement via the provider **admin** route (`C3f′` in the collection, auto-saves `agreement_id`), then `C4` (include `callbackAddress` — schema-required) returns `TransferProcess REQUESTED`, and `C5`/`C6` complete on that transfer. No consumer-side bootstrap is needed for pulls — the earlier claim that the transfer layer required it is outdated.
+**Scope (verified end-to-end on next.66).** The polling path now covers the **full pull flow**, not just negotiation: the public `GET /negotiations/:id` is DSP-spec-minimal (pids + state, no agreement), so fetch the agreement via the provider **admin** route (`C3f′` in the collection, auto-saves `agreement_id`), then `C4` (include `callbackAddress` — schema-required) returns `TransferProcess REQUESTED`, and `C5`/`C6` complete on that transfer. No consumer-side bootstrap is needed for pulls — the earlier claim that the transfer layer required it is outdated.
 
 A `C-poll` request folder in the Postman collection demonstrates this variant — see `postman/README.md` for the request order.
 
@@ -390,7 +385,7 @@ public async getData(): Promise<unknown> {
 
 It registers in-process callbacks, calls the in-process `negotiateAgreement`, then in the `onCompleted` callback calls `requestTransfer` and stores the result. By the time `getData()` returns, MySQL has the row we need.
 
-The extension exposes this whole thing as a single `GET /consumer-client/query-data` REST endpoint — which is what makes it usable from Postman. **The extension is the "client app" that the protocol assumes you have.**
+The extension exposes this whole thing as a small two-call REST API (`POST /consumer-client/negotiate` then `POST /consumer-client/query-data`), which is what makes it usable from Postman. **The extension is the "client app" that the protocol assumes you have.**
 
 ### Real cross-node deployments
 
@@ -430,7 +425,7 @@ You used `cons_trust_jwt` instead of `prov_trust_jwt`. The agreement's `assigner
 
 ### `pullTransfersNotSupported` on C5
 
-The dataspace control plane service didn't get `dataPlanePath` in its config — set `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace/entities"` in `.env.multitenant` (the consumer-client extension's `extension.ts` forwards it into the control-plane config).
+The dataspace control plane service didn't get `dataPlanePath` in its config — set `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` in `.env.multitenant` (the consumer-client extension's `extension.ts` forwards it into the control-plane config).
 
 ### `noArbiters` / `noProcessors` on C6
 
@@ -449,7 +444,7 @@ Postman's structured `query` array can re-parse a pre-built query string (`data_
 ### `state=TERMINATED` immediately on C3
 
 The negotiation was rejected. Two common causes:
-- The callback POST from provider to consumer 404'd (you used `/dataspace-control-plane` as `callbackAddress` instead of `/rights-management` — but even fixing this won't help, because of the bootstrap gap above; use the shortcut)
+- The callback POST from provider to consumer 404'd (you used `/dataspace` as `callbackAddress` instead of `/rights-management` — but even fixing this won't help, because of the bootstrap gap above; use the shortcut)
 - Missing PIP/arbiter env vars
 
 ---

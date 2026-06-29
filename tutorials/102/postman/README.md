@@ -15,14 +15,14 @@ This README is the manual companion: every request, every header, every body, ev
 
 ## Prerequisites
 
-- `tutorials/102` node up via `docker compose up -d` (provider + consumer tenants bootstrapped with org DIDs — see `../next53-org-identifiers-migration-and-findings.md §3`).
-- The published image `twinfoundation/twin-node:0.0.3-next.56` (or newer) — carries the org-identifiers refactor and both platform fixes (#181, #88).
+- `tutorials/102` node up via `./build-extensions.sh && docker compose up -d` (`build-extensions.sh` builds the apps + strips bundled `@twin.org/*`; provider + consumer tenants bootstrapped with org DIDs via `twin-node.sh` + `onboard-org.sh`).
+- The published image `twinfoundation/twin-node:0.9.1-next.2` (or newer) bakes all `@twin.org/*` on the `0.9.1-next` line (dataspace `0.9.1-next.4`, core `0.9.1-next.5`). On `0.9.1-next.x` the extensions must use the host's `@twin.org/*` at runtime: build them with `./build-extensions.sh` (it strips the bundled copies), else the node fails to start (`context ID "node" is missing`).
 - `common/.env.local` has the two rights-management env vars (else the data-pull leg returns `noArbiters` / `noProcessors`):
   ```sh
   TWIN_RIGHTS_MANAGEMENT_POLICY_ARBITERS="pass-through"
   TWIN_RIGHTS_MANAGEMENT_POLICY_ENFORCEMENT_PROCESSORS="pass-through"
   ```
-- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace/entities"` and `TWIN_DATASPACE_ENABLED="true"` — without the data-plane path, C5 returns `pullTransfersNotSupported`.
+- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` and `TWIN_DATASPACE_ENABLED="true"` — without the data-plane path, C5 returns `pullTransfersNotSupported`.
 
 ---
 
@@ -144,7 +144,7 @@ Authorization: Bearer {{prov_session_jwt}}
 Skip if dataset already exists.
 
 ```http
-POST {{base}}/dataspace-control-plane/app-datasets?organization={{prov_did}}
+POST {{base}}/dataspace/app-datasets?organization={{prov_did}}
 Content-Type: application/json
 Authorization: Bearer {{prov_session_jwt}}
 
@@ -224,7 +224,7 @@ Authorization: Bearer {{cons_session_jwt}}
 
 ## C. DSP transfer flow (repeatable)
 
-> ⚠️ **The callback-style C2/C3 below are reference-only** — they show the correct DSP shape but TERMINATE, because no REST endpoint creates the consumer-side negotiation record (the callback the provider pushes has nowhere to land). For a fully Postman-driven pull, use the **C-poll** folder (`C2′ → C3a′–e′ → C3f′`) to reach FINALIZED + capture `agreement_id`, then **C4 → C5 → C6** (all work from pure REST). The **C-shortcut** (`GET /consumer-client/query-data`) is the convenience alternative. Full explanation: [../dsp-postman-walkthrough.md](../dsp-postman-walkthrough.md#why-c2c3c4-arent-100-postman-able).
+> ⚠️ **The callback-style C2/C3 below are reference-only** — they show the correct DSP shape but TERMINATE, because no REST endpoint creates the consumer-side negotiation record (the callback the provider pushes has nowhere to land). For a fully Postman-driven pull, use the **C-poll** folder (`C2′ → C3a′–e′ → C3f′`) to reach FINALIZED + capture `agreement_id`, then **C4 → C5 → C6** (all work from pure REST). The **C-shortcut** (two-call `POST /consumer-client/negotiate` then `POST /consumer-client/query-data`) is the automated alternative (Way 1; needs auto-start `"true"`). Full explanation: [../dsp-postman-walkthrough.md](../dsp-postman-walkthrough.md#why-c2c3c4-arent-100-postman-able).
 
 ### C1. Query the federated catalogue
 
@@ -274,7 +274,7 @@ Authorization: Bearer {{cons_trust_jwt}}
 
 **Generate a fresh `consumerPid`** — `urn:uuid:` plus any unique UUID. The collection's Pre-request Script does this automatically.
 
-> ⚠️ Note the `callbackAddress` path is `/rights-management`, not `/dataspace-control-plane`. The provider POSTs negotiation state-changes back to `{callbackAddress}/negotiations/{pid}/offers`, and that route lives in the PNP service mounted under `/rights-management/`. If you point it at `/dataspace-control-plane/`, the callback 404s and the negotiation TERMINATES.
+> ⚠️ Note the `callbackAddress` path is `/rights-management`, not `/dataspace`. The provider POSTs negotiation state-changes back to `{callbackAddress}/negotiations/{pid}/offers`, and that route lives in the PNP service mounted under `/rights-management/`. If you point it at `/dataspace/`, the callback 404s and the negotiation TERMINATES.
 
 **Save:** `response.providerPid` → `negotiation_id` (negotiations are keyed by `providerPid` on the provider side).
 
@@ -294,7 +294,7 @@ Repeat until `response.state === "FINALIZED"`. With the `pass-through` negotiato
 ### C4. Request transfer (pull mode)
 
 ```http
-POST {{base}}/dataspace-control-plane/transfers/request?organization={{prov_did}}
+POST {{base}}/dataspace/transfers/request?organization={{prov_did}}
 Content-Type: application/json
 Authorization: Bearer {{cons_trust_jwt}}
 
@@ -303,7 +303,7 @@ Authorization: Bearer {{cons_trust_jwt}}
   "@type": "TransferRequestMessage",
   "agreementId": "{{agreement_id}}",
   "consumerPid": "urn:uuid:GENERATE-FRESH-UUID-HERE",
-  "callbackAddress": "{{host_internal}}/dataspace-control-plane?organization={{cons_did}}",
+  "callbackAddress": "{{host_internal}}/dataspace?organization={{cons_did}}",
   "format": "HttpData-PULL"
 }
 ```
@@ -318,7 +318,7 @@ Authorization: Bearer {{cons_trust_jwt}}
 > ⚠️ **Bearer is `prov_trust_jwt` here**, NOT `cons_trust_jwt`. The agreement's `assigner` is the provider — `startTransfer`'s authorization check requires a provider-signed token. Using the consumer's token fails with `callerNotAuthorizedAsProvider`.
 
 ```http
-POST {{base}}/dataspace-control-plane/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
+POST {{base}}/dataspace/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
 Content-Type: application/json
 Authorization: Bearer {{prov_trust_jwt}}
 
@@ -341,7 +341,7 @@ Authorization: Bearer {{prov_trust_jwt}}
   "dataAddress": {
     "@type": "DataAddress",
     "endpointType": "https://schema.twindev.org/dspace/v1/Https-Query-Endpoint",
-    "endpoint": "http://localhost:3000/dataspace/entities?organization=<provider-org-did>",
+    "endpoint": "http://localhost:3000/dataspace?organization=<provider-org-did>",
     "endpointProperties": [
       { "@type": "EndpointProperty", "name": "authorization", "value": "eyJ..." },
       { "@type": "EndpointProperty", "name": "authType", "value": "bearer" }
@@ -364,11 +364,11 @@ Authorization: Bearer {{prov_trust_jwt}}
 ### C6. Fetch the data
 
 ```http
-GET {{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
+GET {{base}}/dataspace/entities?organization={{prov_did}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
 Authorization: Bearer {{access_token}}
 ```
 
-> ⚠️ **In Postman, the URL must be ONLY the `raw` string above** — leave the **Params** tab empty. Do NOT split `consumerPid` / `type` into structured query params. (Post-#203 the endpoint carries a cleartext `?organization=<did>`, so the old encrypted-token re-encoding break is gone, but keeping everything in the raw URL bar still avoids Postman re-parsing surprises.)
+> The transfer advertises the data-plane **base** endpoint (`…/dataspace?organization=…`); the `entities` route is appended explicitly, so C6 GETs `/dataspace/entities`.
 
 **Expect:** `HTTP 200`. Response is a `schema.org` `ItemList` of Consignment entities:
 
@@ -417,22 +417,19 @@ Authorization: Bearer {{access_token}}
 
 ---
 
-## Shortcut — actually the only path that works from Postman
+## Shortcut: the automated consumer-client flow (Way 1)
 
-The collection has a **C-shortcut** request between C1 and C5. It's the only way to populate `consumer_pid` / `provider_pid` from outside the node — for the architectural reason explained in [../dsp-postman-walkthrough.md](../dsp-postman-walkthrough.md#why-c2c3c4-arent-100-postman-able).
+The collection's **C-shortcut** is a two-call extension API that drives the whole negotiation, transfer, and fetch in-process. It needs `TWIN_DATASPACE_AUTO_START_TRANSFERS="true"` (the default in `.env.multitenant`) so the provider auto-starts the transfer.
 
 ```http
-GET {{base}}/consumer-client/query-data?organization={{cons_did}}
+POST {{base}}/consumer-client/negotiate?organization={{cons_did}}
+{ "datasetId": "{{dataset_id}}" }                                       -> { "agreementId": "..." }
+
+POST {{base}}/consumer-client/query-data?organization={{cons_did}}
+{ "agreementId": "{{agreement_id}}", "entityType": "{{dataset_type}}" } -> ItemList of Consignments
 ```
 
-Then read the latest `REQUESTED` transfer-process row from MySQL (the extension stores them there; the HTTP response is just `{}`):
-
-```bash
-docker exec mysql8_container mysql -utwin -ptwin twin -e \
-  "SELECT consumerPid, providerPid FROM \`transfer-process\` WHERE state='REQUESTED' ORDER BY dateCreated DESC LIMIT 1;"
-```
-
-Plug those into `consumer_pid` / `provider_pid` + URL-encode `:` → `%3A` for `provider_pid_enc`, and pick up at **C5**.
+`C-shortcut-1` saves `agreement_id`; `C-shortcut-2` returns the data directly (no MySQL `SELECT`, no manual C5). For the manual provider-driven path (Way 2), set `TWIN_DATASPACE_AUTO_START_TRANSFERS="false"` (then `docker compose up -d`) and use the C-poll path (C2′–C6) below.
 
 ## C-poll — polling-only negotiation (rights-management ≥ `0.0.3-next.41`)
 
@@ -450,4 +447,4 @@ Run order:
 | **C3e′** | `GET /rights-management/negotiations/:id` | poll until `state: FINALIZED` |
 | **C3f′** | `GET /rights-management/negotiations/admin/:id` (provider session) | fetch the agreement — the public GET is spec-minimal — auto-saves `agreement_id` |
 
-**Updated 2026-06-12 (verified on next.53):** no longer scoped to negotiation only — after C3f′ captures `agreement_id`, continue with C4 (include `callbackAddress` in the body — it is schema-required) → C5 → C6, all pure REST. The pull flow needs no consumer-side bootstrap; the `C-shortcut` is now just a convenience. See [../dsp-postman-walkthrough.md](../dsp-postman-walkthrough.md#polling-only-path-for-the-negotiation-phase-rights-management--003-next41) for the full architectural explanation.
+**Verified on next.66:** no longer scoped to negotiation only — after C3f′ captures `agreement_id`, continue with C4 (include `callbackAddress` in the body — it is schema-required) → C5 → C6, all pure REST. The pull flow needs no consumer-side bootstrap; the `C-shortcut` is now just a convenience. See [../dsp-postman-walkthrough.md](../dsp-postman-walkthrough.md#polling-only-path-for-the-negotiation-phase-rights-management--003-next41) for the full architectural explanation.

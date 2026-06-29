@@ -215,12 +215,12 @@
 							}
 						},
 						"url": {
-							"raw": "{{base}}/dataspace-control-plane/app-datasets?organization={{prov_did}}",
+							"raw": "{{base}}/dataspace/app-datasets?organization={{prov_did}}",
 							"host": [
 								"{{base}}"
 							],
 							"path": [
-								"dataspace-control-plane",
+								"dataspace",
 								"app-datasets"
 							],
 							"query": [
@@ -582,7 +582,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"@context\": [\"https://w3id.org/dspace/2025/1/context.jsonld\"],\n  \"@type\": \"TransferRequestMessage\",\n  \"agreementId\": \"{{agreement_id}}\",\n  \"consumerPid\": \"{{consumer_pid}}\",\n  \"callbackAddress\": \"{{host_internal}}/dataspace-control-plane?organization={{cons_did}}\",\n  \"format\": \"HttpData-PULL\"\n}",
+							"raw": "{\n  \"@context\": [\"https://w3id.org/dspace/2025/1/context.jsonld\"],\n  \"@type\": \"TransferRequestMessage\",\n  \"agreementId\": \"{{agreement_id}}\",\n  \"consumerPid\": \"{{consumer_pid}}\",\n  \"callbackAddress\": \"{{host_internal}}/dataspace?organization={{cons_did}}\",\n  \"format\": \"HttpData-PULL\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -590,12 +590,12 @@
 							}
 						},
 						"url": {
-							"raw": "{{base}}/dataspace-control-plane/transfers/request?organization={{prov_did}}",
+							"raw": "{{base}}/dataspace/transfers/request?organization={{prov_did}}",
 							"host": [
 								"{{base}}"
 							],
 							"path": [
-								"dataspace-control-plane",
+								"dataspace",
 								"transfers",
 								"request"
 							],
@@ -609,7 +609,7 @@
 					}
 				},
 				{
-					"name": "C-shortcut. Drive negotiation+requestTransfer via consumer-client extension",
+					"name": "C-shortcut-1. Negotiate via consumer-client extension",
 					"event": [
 						{
 							"listen": "test",
@@ -617,38 +617,93 @@
 								"type": "text/javascript",
 								"exec": [
 									"pm.test('HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
-									"",
-									"// The consumer-client extension runs negotiateAgreement + requestTransfer in-process",
-									"// and stores the resulting transfer-process row in MySQL with state=REQUESTED.",
-									"// Postman cannot read MySQL directly \u2014 you must now run this in your terminal:",
-									"//",
-									"//   docker exec mysql8_container mysql -utwin -ptwin twin -e \\",
-									"//     \"SELECT consumerPid, providerPid FROM \\`transfer-process\\` WHERE state='REQUESTED' \\",
-									"//      ORDER BY dateCreated DESC LIMIT 1;\"",
-									"//",
-									"// Then open the environment (eye icon \u2192 Edit) and set:",
-									"//   consumer_pid      = <consumerPid from MySQL>",
-									"//   provider_pid      = <providerPid from MySQL>",
-									"//   provider_pid_enc  = <providerPid with ':' \u2192 '%3A'>",
-									"//",
-									"// Then run C5.",
-									"//",
-									"// Why this is necessary: DSP requires consumer-side state to be bootstrapped",
-									"// in-process before the negotiation/transfer messages reach the provider.",
-									"// See dsp-postman-walkthrough.md \u2192 'Why C2/C3/C4 aren't 100% Postman-able'.",
-									"console.log('Now read the latest REQUESTED transfer-process row from MySQL \u2014 see Tests script for the exact command');"
+									"const j = pm.response.json();",
+									"pm.test('agreementId returned', () => pm.expect(j.agreementId).to.be.a('string'));",
+									"if (j.agreementId) {",
+									"    pm.environment.set('agreement_id', j.agreementId);",
+									"    console.log('Saved agreement_id =', j.agreementId);",
+									"}"
 								]
 							}
 						}
 					],
 					"request": {
-						"method": "GET",
+						"method": "POST",
 						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
 							{
 								"key": "Authorization",
 								"value": "Bearer {{cons_session_jwt}}"
 							}
 						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"datasetId\": \"{{dataset_type}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base}}/consumer-client/negotiate?organization={{cons_did}}",
+							"host": [
+								"{{base}}"
+							],
+							"path": [
+								"consumer-client",
+								"negotiate"
+							],
+							"query": [
+								{
+									"key": "organization",
+									"value": "{{cons_did}}"
+								}
+							]
+						},
+						"description": "Way 1 (automated). The consumer-client extension runs the full DSP negotiation in-process and returns {agreementId}. Needs TWIN_DATASPACE_AUTO_START_TRANSFERS=\"true\" (default) so the provider auto-starts the transfer for C-shortcut-2. Then run C-shortcut-2."
+					}
+				},
+				{
+					"name": "C-shortcut-2. Query data via consumer-client extension",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200', () => pm.expect(pm.response.code).to.eql(200));",
+									"const j = pm.response.json();",
+									"pm.test('ItemList returned', () => pm.expect(j.type || j['@type']).to.eql('ItemList'));",
+									"console.log('entities:', (j.itemListElement || []).length);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{cons_session_jwt}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"agreementId\": \"{{agreement_id}}\",\n  \"entityType\": \"{{dataset_type}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
 						"url": {
 							"raw": "{{base}}/consumer-client/query-data?organization={{cons_did}}",
 							"host": [
@@ -665,7 +720,7 @@
 								}
 							]
 						},
-						"description": "REPLACES C2 + C3 + C4 \u2014 those steps fail purely from Postman because the consumer-side DSP state machine has to be bootstrapped in-process (no REST endpoint creates the consumer-side negotiation/transfer rows). This GET drives the entire bootstrap inside the node via the tutorial's consumer-client extension. Returns HTTP 200 {} once the negotiation has FINALIZED and a transfer-process row exists. See Tests script for the MySQL query you must run next."
+						"description": "Way 1 (automated). Drives the transfer + data fetch in-process using the agreement_id from C-shortcut-1, returning the ItemList of Consignment entities. Needs TWIN_DATASPACE_AUTO_START_TRANSFERS=\"true\"."
 					}
 				},
 				{
@@ -713,12 +768,12 @@
 							}
 						},
 						"url": {
-							"raw": "{{base}}/dataspace-control-plane/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}",
+							"raw": "{{base}}/dataspace/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}",
 							"host": [
 								"{{base}}"
 							],
 							"path": [
-								"dataspace-control-plane",
+								"dataspace",
 								"transfers",
 								"{{provider_pid_enc}}",
 								"start"
@@ -758,9 +813,27 @@
 							}
 						],
 						"url": {
-							"raw": "{{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}",
+							"raw": "{{base}}/dataspace/entities?organization={{prov_did}}&consumerPid={{consumer_pid}}&type={{dataset_type}}",
 							"host": [
-								"{{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}"
+								"{{base}}"
+							],
+							"path": [
+								"dataspace",
+								"entities"
+							],
+							"query": [
+								{
+									"key": "organization",
+									"value": "{{prov_did}}"
+								},
+								{
+									"key": "consumerPid",
+									"value": "{{consumer_pid}}"
+								},
+								{
+									"key": "type",
+									"value": "{{dataset_type}}"
+								}
 							]
 						}
 					}

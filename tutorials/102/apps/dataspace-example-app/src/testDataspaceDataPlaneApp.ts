@@ -7,9 +7,9 @@ import {
 	type IAuditableItemGraphVertex
 } from "@twin.org/auditable-item-graph-models";
 import { ContextIdHelper, ContextIdKeys, ContextIdStore } from "@twin.org/context";
-import { ArrayHelper, ComponentFactory, Guards, Is, ObjectHelper } from "@twin.org/core";
+import { ArrayHelper, ComponentFactory, Guards } from "@twin.org/core";
 import { DataTypeHandlerFactory } from "@twin.org/data-core";
-import type { IJsonLdDocument, IJsonLdNodeObject } from "@twin.org/data-json-ld";
+import type { IJsonLdDocument } from "@twin.org/data-json-ld";
 import {
 	DataRequestType,
 	type IDataspaceActivity,
@@ -18,13 +18,68 @@ import {
 	type IDataspaceApp,
 	type IProcessingGroupOptions
 } from "@twin.org/dataspace-models";
-import { ComparisonOperator, type IComparator } from "@twin.org/entity";
 import { LogLevel, type ILoggingComponent } from "@twin.org/logging-models";
 import { nameof } from "@twin.org/nameof";
-import { SchemaOrgContexts, SchemaOrgTypes } from "@twin.org/standards-schema-org";
-import { UneceContexts, UneceTypes } from "@twin.org/standards-unece";
+import type { IDataspaceProtocolDataset } from "@twin.org/standards-dataspace-protocol";
 import type { IActivityStreamsActivity } from "@twin.org/standards-w3c-activity-streams";
 import type { ITestAppConstructorOptions } from "./ITestAppConstructorOptions.js";
+
+// Default consignments — two entries with different port locations for filtering tests.
+// Can be overridden via constructor options (e.g. loaded from a JSON file via @json: env syntax).
+const DEFAULT_CONSIGNMENTS: IJsonLdDocument[] = [
+	{
+		"@context": "https://vocabulary.uncefact.org/unece-context-D23B.jsonld",
+		type: "Consignment",
+		id: "urn:ucr:24PLP051219453I002610799053311",
+		identifier: "M-Test0001",
+		globalId: "5-GB-IMPORT-Test0001",
+		destinationCountry: {
+			type: "Country",
+			countryId: "unece:CountryId#GB"
+		},
+		loadingLocation: {
+			type: "LogisticsLocation",
+			id: "unece:LOCODE#NLRTM",
+			name: "Rotterdam"
+		},
+		unloadingLocation: {
+			type: "LogisticsLocation",
+			id: "unece:LOCODE#GBFXT",
+			name: "Felixstowe"
+		}
+	},
+	{
+		"@context": "https://vocabulary.uncefact.org/unece-context-D23B.jsonld",
+		type: "Consignment",
+		id: "urn:ucr:24PLP051219453I002710888164422",
+		identifier: "M-Test0002",
+		globalId: "5-GB-IMPORT-Test0002",
+		destinationCountry: {
+			type: "Country",
+			countryId: "unece:CountryId#GB"
+		},
+		loadingLocation: {
+			type: "LogisticsLocation",
+			id: "unece:LOCODE#FRLEH",
+			name: "Le Havre"
+		},
+		unloadingLocation: {
+			type: "LogisticsLocation",
+			id: "unece:LOCODE#GBDVR",
+			name: "Dover"
+		}
+	}
+];
+
+const DEFAULT_ENTITIES: IJsonLdDocument[] = [
+	DEFAULT_CONSIGNMENTS[0],
+	{
+		"@context": "https://vocabulary.uncefact.org/unece-context-D23B.jsonld",
+		type: "Document",
+		id: "urn:document:a3456fddaa56",
+		documentTypeCode: "unece:DocumentCodeList#853"
+	}
+];
 
 /**
  * Test App Activity Handler.
@@ -53,6 +108,12 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 	private readonly _auditableItemGraph: IAuditableItemGraphComponent;
 
 	/**
+	 * Consignment documents served by this app.
+	 * @internal
+	 */
+	private readonly _consignments: IJsonLdDocument[];
+
+	/**
 	 * Node Identity
 	 * @internal
 	 */
@@ -66,6 +127,7 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 		this._logging = ComponentFactory.getIfExists<ILoggingComponent>(
 			options?.loggingComponentType ?? "logging"
 		);
+		this._consignments = options?.consignments ?? DEFAULT_CONSIGNMENTS;
 
 		this._auditableItemGraph = ComponentFactory.get<IAuditableItemGraphComponent>(
 			options?.auditableItemGraphComponentType ?? "auditable-item-graph"
@@ -196,62 +258,25 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 
 		switch (dataRequest.type) {
 			case DataRequestType.DataAssetEntities: {
-				if (Is.arrayValue(dataRequest.entitySet.entityId)) {
+				if (dataRequest.entitySet.entityId) {
 					const entityIds = dataRequest.entitySet.entityId;
-					const conditions: IComparator[] = [];
-					// The AIG will perform an OR over the entity Ids
-					for (const entityId of entityIds) {
-						conditions.push({
-							property: "annotationObject.globalId",
-							value: entityId,
-							comparison: ComparisonOperator.Equals
-						});
-					}
-
-					const items = await this._auditableItemGraph.query(undefined, conditions);
-					const data = {
-						"@context": SchemaOrgContexts.Context,
-						type: SchemaOrgTypes.ItemList
-					};
-					const itemListElement: IJsonLdNodeObject[] = [];
-					for (const item of items.entries.itemListElement) {
-						if (item.annotationObject?.type === UneceTypes.Consignment) {
-							itemListElement.push(item.annotationObject);
-						}
-					}
-					ObjectHelper.propertySet(data, "itemListElement", itemListElement);
-					return { data: itemListElement };
+					const matched = this._consignments.filter(c =>
+						entityIds.includes((c as { id?: string }).id ?? "")
+					);
+					return { data: (matched.length === 1 ? matched[0] : matched) as IJsonLdDocument };
 				}
 
-				if (
-					dataRequest.entitySet.entityType === `${UneceContexts.Namespace}${UneceTypes.Consignment}`
-				) {
-					const conditions: IComparator[] = [
-						{
-							property: "annotationObject.type",
-							value: UneceTypes.Consignment,
-							comparison: ComparisonOperator.Equals
-						}
-					];
-
-					const items = await this._auditableItemGraph.query(undefined, conditions);
-					const data = {
-						"@context": SchemaOrgContexts.Context,
-						type: SchemaOrgTypes.ItemList
+				if (dataRequest.entitySet.entityType === "https://vocabulary.uncefact.org/Consignment") {
+					return {
+						data: this._consignments as unknown as IJsonLdDocument
 					};
-					const itemListElement: IJsonLdNodeObject[] = [];
-					for (const item of items.entries.itemListElement) {
-						itemListElement.push(item.annotationObject as IJsonLdNodeObject);
-					}
-					ObjectHelper.propertySet(data, "itemListElement", itemListElement);
-					return { data: itemListElement };
 				}
 
 				return { data: [] };
 			}
+
 			case DataRequestType.QueryDataAsset:
-				// Not supported in this example
-				return { data: [] };
+				return { data: DEFAULT_ENTITIES as unknown as IJsonLdDocument };
 		}
 	}
 }
