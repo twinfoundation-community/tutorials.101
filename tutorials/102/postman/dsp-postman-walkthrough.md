@@ -1,7 +1,7 @@
 # Tutorial 102 — DSP Pull-Mode Postman Walkthrough
 
 > Created: 2026-06-11
-> Last updated: 2026-06-24
+> Last updated: 2026-06-29
 
 > **⚠️ #203 update (organization identifiers, 2026-06-11).** This walkthrough and the collection in `postman/` have been migrated to the org-identifiers refactor (twin-node#19 / PR #203) and re-verified end-to-end via curl. What changed:
 > - **Routing:** `x-api-key` works ONLY on `/authentication/login` (A1/B1). Every other request is tenant-routed by `?organization=<org-did>` — the collection now uses `{{prov_did}}` / `{{cons_did}}` there. Encrypted tenant tokens (`x-enc-tenant-token`, `prov_tenant_token`/`cons_tenant_token` env vars) are GONE.
@@ -44,7 +44,7 @@ This is the same architectural pattern as OAuth 2.0 — pure HTTP tools can comp
   TWIN_RIGHTS_MANAGEMENT_POLICY_ARBITERS="pass-through"
   TWIN_RIGHTS_MANAGEMENT_POLICY_ENFORCEMENT_PROCESSORS="pass-through"
   ```
-- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace/entities"` (else C5 → `pullTransfersNotSupported`).
+- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` (else C5 → `pullTransfersNotSupported`).
 - `.env.multitenant` has **`TWIN_DATASPACE_AUTO_START_TRANSFERS="false"`** for this manual walkthrough, so the provider does not auto-start and C5 `start` returns the data address synchronously. (Leave it `"true"`, the default, only for the automated C-shortcut.) Change it and `docker compose up -d` to apply, no rebuild needed.
 - Postman collection + environment imported from `tutorials/102/postman/`. See `postman/README.md` for the per-request reference.
 
@@ -136,9 +136,11 @@ A few things to know:
 | **A1. Login as provider** | `POST /authentication/login?x-api-key={{prov_api_key}}` with `{email, password}` | `prov_session_jwt` (from `Set-Cookie`) |
 | **A2. Mint provider trust JWT** | `POST /identity/{{prov_did}}/verifiable-credential/trust-assertion` with `{subject:{id:{{prov_did}}}}` | `prov_trust_jwt` (from `response.jwt`) |
 | **A3. Create ODRL Offer** *(skip if exists)* | `POST /rights-management/policy/admin` with the Offer body | — |
-| **A4. Register Dataset** *(skip if exists)* | `POST /dataspace-control-plane/app-datasets` with the dataset body | — |
+| **A4. Register Dataset** *(skip if exists)* | `POST /dataspace/app-datasets` with the dataset body | — |
 
 If A3 returns `"1"` or A4 returns `datasetAlreadyExists` — both fine, you already bootstrapped on a previous run. Move on.
+
+> The provider serves a **static in-memory** consignments dataset (the platform's `dataspace-test-app` pattern); A4 only registers the dataset's catalogue metadata and policy. There is no data-ingestion step and the provider does not query an AIG.
 
 ### B. Consumer setup (one-time)
 
@@ -178,10 +180,12 @@ Instead of running C2 (initiate negotiation), C3 (poll for FINALIZED), C4 (reque
 
 ```http
 POST /consumer-client/negotiate?organization={{cons_did}}
-{ "datasetId": "{{dataset_id}}" }
+{ "datasetId": "{{dataset_type}}" }
 ```
 
 Expect `200 OK` with `{ "agreementId": "..." }`; the test script saves it to `agreement_id`. The extension ran the entire DSP negotiation (request, offer, accept, agree, verify, finalize) in-process.
+
+> The `datasetId` field carries the dataset **type** (`dataset_type`), not the dataset IRI; the consumer-client uses it as the `FilterByMetadata` `dcterms:type` value for the catalogue lookup.
 
 **Step 2 — `C-shortcut-2. Query data`:**
 
@@ -192,6 +196,8 @@ POST /consumer-client/query-data?organization={{cons_did}}
 
 Expect `200 OK` with an `ItemList` of two `Consignment` entities. The extension requested the transfer, waited for the provider to auto-start it, and fetched the data-plane channel, all in-process. No MySQL `SELECT` and no manual C5 are needed.
 
+> **How the pull happens:** the consumer-client fetches through the data-plane `RestClient` (created with `pathPrefix:""`). Because the node sets `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` (the data-plane base), the client resolves `/dataspace/entities`. There is no manual direct-fetch workaround.
+
 > **Why this works:** the `consumer-client` extension is a custom REST surface that internally calls `dataspaceControlPlane.negotiateAgreement(...)` then `prepareTransfer(...)`, in-process methods that bootstrap consumer-side state (negotiation + transfer-process rows, registered callbacks) before talking to the provider over HTTP. `negotiate` resolves when the negotiation FINALIZES; `query-data` resolves when the auto-started transfer reaches STARTED and the data is fetched.
 
 > **Why it needs auto-start:** `query-data` passively waits for the in-process `onStarted` callback, so the provider must auto-start the transfer (`TWIN_DATASPACE_AUTO_START_TRANSFERS="true"`). The manual C5 path (Way 2) needs the opposite value; see the auto-start note at the top.
@@ -201,7 +207,7 @@ Expect `200 OK` with an `ItemList` of two `Consignment` entities. The extension 
 #### C5. Start the transfer (Postman)
 
 ```http
-POST /dataspace-control-plane/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
+POST /dataspace/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
 Authorization: Bearer {{prov_trust_jwt}}     ← ⚠️ PROVIDER trust JWT, not consumer's; routing is ?organization={{prov_did}} (not x-api-key)
 
 {
@@ -224,18 +230,12 @@ Response is a `TransferStartMessage` with `dataAddress.endpoint` and an `authori
 
 #### C6. Fetch the data (Postman)
 
-In Postman, open C6. The URL bar should be exactly:
-
-```
-{{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
-```
-
-⚠️ **Params tab must be empty.** Do NOT specify `consumerPid` or `type` in the structured params — only in the raw URL. (See [URL mangling pitfall](#pitfall-postmans-structured-url-mangles-encrypted-tokens) below.)
-
 ```http
-GET {{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
+GET {{base}}/dataspace/entities?organization={{prov_did}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
 Authorization: Bearer {{access_token}}    ← from C5's dataAddress, NOT a session JWT
 ```
+
+> The transfer advertises the data-plane **base** endpoint (`…/dataspace?organization=…`); the `entities` route is appended to reach the data, so C6 GETs `/dataspace/entities` explicitly.
 
 Expect HTTP 200 with a `schema.org` `ItemList` containing two `Consignment` entities (Rotterdam → Felixstowe and Le Havre → Dover, per the seed data in `dataspace-example-app`).
 
@@ -425,7 +425,7 @@ You used `cons_trust_jwt` instead of `prov_trust_jwt`. The agreement's `assigner
 
 ### `pullTransfersNotSupported` on C5
 
-The dataspace control plane service didn't get `dataPlanePath` in its config — set `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace/entities"` in `.env.multitenant` (the consumer-client extension's `extension.ts` forwards it into the control-plane config).
+The dataspace control plane service didn't get `dataPlanePath` in its config — set `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` in `.env.multitenant` (the consumer-client extension's `extension.ts` forwards it into the control-plane config).
 
 ### `noArbiters` / `noProcessors` on C6
 
@@ -444,7 +444,7 @@ Postman's structured `query` array can re-parse a pre-built query string (`data_
 ### `state=TERMINATED` immediately on C3
 
 The negotiation was rejected. Two common causes:
-- The callback POST from provider to consumer 404'd (you used `/dataspace-control-plane` as `callbackAddress` instead of `/rights-management` — but even fixing this won't help, because of the bootstrap gap above; use the shortcut)
+- The callback POST from provider to consumer 404'd (you used `/dataspace` as `callbackAddress` instead of `/rights-management` — but even fixing this won't help, because of the bootstrap gap above; use the shortcut)
 - Missing PIP/arbiter env vars
 
 ---

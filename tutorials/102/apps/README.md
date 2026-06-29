@@ -1,6 +1,6 @@
 # Apps
 
-This folder contains the example applications used in this tutorial:
+Two apps are included:
 
-- [dataspace-example-app](./dataspace-example-app) — Dataspace example application.
-- [consumer-client](./consumer-client) — Dataspace example consumer client.
+* Dataspace App that serves a static in-memory consignments dataset as a shared dataset. Deployed on the Provider's Node.
+* Consumer Client App. Performs negotiation, starts data transfer and allows to obtain the data. It offers these three functionalities through a REST interface for convenience.

@@ -22,7 +22,7 @@ This README is the manual companion: every request, every header, every body, ev
   TWIN_RIGHTS_MANAGEMENT_POLICY_ARBITERS="pass-through"
   TWIN_RIGHTS_MANAGEMENT_POLICY_ENFORCEMENT_PROCESSORS="pass-through"
   ```
-- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace/entities"` and `TWIN_DATASPACE_ENABLED="true"` — without the data-plane path, C5 returns `pullTransfersNotSupported`.
+- `.env.multitenant` has `TWIN_DATASPACE_DATA_PLANE_PATH="dataspace"` and `TWIN_DATASPACE_ENABLED="true"` — without the data-plane path, C5 returns `pullTransfersNotSupported`.
 
 ---
 
@@ -144,7 +144,7 @@ Authorization: Bearer {{prov_session_jwt}}
 Skip if dataset already exists.
 
 ```http
-POST {{base}}/dataspace-control-plane/app-datasets?organization={{prov_did}}
+POST {{base}}/dataspace/app-datasets?organization={{prov_did}}
 Content-Type: application/json
 Authorization: Bearer {{prov_session_jwt}}
 
@@ -274,7 +274,7 @@ Authorization: Bearer {{cons_trust_jwt}}
 
 **Generate a fresh `consumerPid`** — `urn:uuid:` plus any unique UUID. The collection's Pre-request Script does this automatically.
 
-> ⚠️ Note the `callbackAddress` path is `/rights-management`, not `/dataspace-control-plane`. The provider POSTs negotiation state-changes back to `{callbackAddress}/negotiations/{pid}/offers`, and that route lives in the PNP service mounted under `/rights-management/`. If you point it at `/dataspace-control-plane/`, the callback 404s and the negotiation TERMINATES.
+> ⚠️ Note the `callbackAddress` path is `/rights-management`, not `/dataspace`. The provider POSTs negotiation state-changes back to `{callbackAddress}/negotiations/{pid}/offers`, and that route lives in the PNP service mounted under `/rights-management/`. If you point it at `/dataspace/`, the callback 404s and the negotiation TERMINATES.
 
 **Save:** `response.providerPid` → `negotiation_id` (negotiations are keyed by `providerPid` on the provider side).
 
@@ -294,7 +294,7 @@ Repeat until `response.state === "FINALIZED"`. With the `pass-through` negotiato
 ### C4. Request transfer (pull mode)
 
 ```http
-POST {{base}}/dataspace-control-plane/transfers/request?organization={{prov_did}}
+POST {{base}}/dataspace/transfers/request?organization={{prov_did}}
 Content-Type: application/json
 Authorization: Bearer {{cons_trust_jwt}}
 
@@ -303,7 +303,7 @@ Authorization: Bearer {{cons_trust_jwt}}
   "@type": "TransferRequestMessage",
   "agreementId": "{{agreement_id}}",
   "consumerPid": "urn:uuid:GENERATE-FRESH-UUID-HERE",
-  "callbackAddress": "{{host_internal}}/dataspace-control-plane?organization={{cons_did}}",
+  "callbackAddress": "{{host_internal}}/dataspace?organization={{cons_did}}",
   "format": "HttpData-PULL"
 }
 ```
@@ -318,7 +318,7 @@ Authorization: Bearer {{cons_trust_jwt}}
 > ⚠️ **Bearer is `prov_trust_jwt` here**, NOT `cons_trust_jwt`. The agreement's `assigner` is the provider — `startTransfer`'s authorization check requires a provider-signed token. Using the consumer's token fails with `callerNotAuthorizedAsProvider`.
 
 ```http
-POST {{base}}/dataspace-control-plane/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
+POST {{base}}/dataspace/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}
 Content-Type: application/json
 Authorization: Bearer {{prov_trust_jwt}}
 
@@ -341,7 +341,7 @@ Authorization: Bearer {{prov_trust_jwt}}
   "dataAddress": {
     "@type": "DataAddress",
     "endpointType": "https://schema.twindev.org/dspace/v1/Https-Query-Endpoint",
-    "endpoint": "http://localhost:3000/dataspace/entities?organization=<provider-org-did>",
+    "endpoint": "http://localhost:3000/dataspace?organization=<provider-org-did>",
     "endpointProperties": [
       { "@type": "EndpointProperty", "name": "authorization", "value": "eyJ..." },
       { "@type": "EndpointProperty", "name": "authType", "value": "bearer" }
@@ -364,11 +364,11 @@ Authorization: Bearer {{prov_trust_jwt}}
 ### C6. Fetch the data
 
 ```http
-GET {{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
+GET {{base}}/dataspace/entities?organization={{prov_did}}&consumerPid={{consumer_pid}}&type={{dataset_type}}
 Authorization: Bearer {{access_token}}
 ```
 
-> ⚠️ **In Postman, the URL must be ONLY the `raw` string above** — leave the **Params** tab empty. Do NOT split `consumerPid` / `type` into structured query params. (Post-#203 the endpoint carries a cleartext `?organization=<did>`, so the old encrypted-token re-encoding break is gone, but keeping everything in the raw URL bar still avoids Postman re-parsing surprises.)
+> The transfer advertises the data-plane **base** endpoint (`…/dataspace?organization=…`); the `entities` route is appended explicitly, so C6 GETs `/dataspace/entities`.
 
 **Expect:** `HTTP 200`. Response is a `schema.org` `ItemList` of Consignment entities:
 

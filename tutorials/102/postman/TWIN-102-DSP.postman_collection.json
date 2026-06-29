@@ -215,12 +215,12 @@
 							}
 						},
 						"url": {
-							"raw": "{{base}}/dataspace-control-plane/app-datasets?organization={{prov_did}}",
+							"raw": "{{base}}/dataspace/app-datasets?organization={{prov_did}}",
 							"host": [
 								"{{base}}"
 							],
 							"path": [
-								"dataspace-control-plane",
+								"dataspace",
 								"app-datasets"
 							],
 							"query": [
@@ -582,7 +582,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"@context\": [\"https://w3id.org/dspace/2025/1/context.jsonld\"],\n  \"@type\": \"TransferRequestMessage\",\n  \"agreementId\": \"{{agreement_id}}\",\n  \"consumerPid\": \"{{consumer_pid}}\",\n  \"callbackAddress\": \"{{host_internal}}/dataspace-control-plane?organization={{cons_did}}\",\n  \"format\": \"HttpData-PULL\"\n}",
+							"raw": "{\n  \"@context\": [\"https://w3id.org/dspace/2025/1/context.jsonld\"],\n  \"@type\": \"TransferRequestMessage\",\n  \"agreementId\": \"{{agreement_id}}\",\n  \"consumerPid\": \"{{consumer_pid}}\",\n  \"callbackAddress\": \"{{host_internal}}/dataspace?organization={{cons_did}}\",\n  \"format\": \"HttpData-PULL\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -590,12 +590,12 @@
 							}
 						},
 						"url": {
-							"raw": "{{base}}/dataspace-control-plane/transfers/request?organization={{prov_did}}",
+							"raw": "{{base}}/dataspace/transfers/request?organization={{prov_did}}",
 							"host": [
 								"{{base}}"
 							],
 							"path": [
-								"dataspace-control-plane",
+								"dataspace",
 								"transfers",
 								"request"
 							],
@@ -641,7 +641,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"datasetId\": \"{{dataset_id}}\"\n}",
+							"raw": "{\n  \"datasetId\": \"{{dataset_type}}\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -768,12 +768,12 @@
 							}
 						},
 						"url": {
-							"raw": "{{base}}/dataspace-control-plane/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}",
+							"raw": "{{base}}/dataspace/transfers/{{provider_pid_enc}}/start?organization={{prov_did}}",
 							"host": [
 								"{{base}}"
 							],
 							"path": [
-								"dataspace-control-plane",
+								"dataspace",
 								"transfers",
 								"{{provider_pid_enc}}",
 								"start"
@@ -813,9 +813,27 @@
 							}
 						],
 						"url": {
-							"raw": "{{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}",
+							"raw": "{{base}}/dataspace/entities?organization={{prov_did}}&consumerPid={{consumer_pid}}&type={{dataset_type}}",
 							"host": [
-								"{{data_endpoint}}&consumerPid={{consumer_pid}}&type={{dataset_type}}"
+								"{{base}}"
+							],
+							"path": [
+								"dataspace",
+								"entities"
+							],
+							"query": [
+								{
+									"key": "organization",
+									"value": "{{prov_did}}"
+								},
+								{
+									"key": "consumerPid",
+									"value": "{{consumer_pid}}"
+								},
+								{
+									"key": "type",
+									"value": "{{dataset_type}}"
+								}
 							]
 						}
 					}

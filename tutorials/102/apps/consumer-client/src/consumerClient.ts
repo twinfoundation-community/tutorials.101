@@ -5,18 +5,17 @@
 /* eslint-disable no-restricted-syntax */
 
 import { ContextIdKeys, ContextIdStore, type IContextIds } from "@twin.org/context";
-import { ArrayHelper, ComponentFactory, Is } from "@twin.org/core";
+import { ComponentFactory, type IError, Is } from "@twin.org/core";
 import {
 	DataspaceTransferFormat,
+	type IDataspaceDataPlaneComponent,
 	type IDataspaceControlPlaneComponent
 } from "@twin.org/dataspace-models";
 import type { IFederatedCatalogueComponent } from "@twin.org/federated-catalogue-models";
 import { type ILoggingComponent, LogLevel } from "@twin.org/logging-models";
 import {
 	DataspaceProtocolCatalogTypes,
-	type IDataspaceProtocolCatalogBase,
 	type IDataspaceProtocolDataset,
-	type IDataspaceProtocolDatasetBase,
 	type DataspaceProtocolContractNegotiationStateType,
 	type DataspaceProtocolTransferProcessStateType,
 	type IDataspaceProtocolAgreement,
@@ -27,16 +26,12 @@ import {
 import type { ITrustComponent } from "@twin.org/trust-models";
 import type { IConsumerClientComponent } from "./IConsumerClientComponent.js";
 import type { IConsumerClientConstructorOptions } from "./IConsumerClientConstructorOptions.js";
+import type { IConsumerRequest } from "./IConsumerRequest.js";
 
 /**
  * Test App Activity Handler.
  */
 export class ConsumerClient implements IConsumerClientComponent {
-	// This node's own callback address (the provider calls back here during
-	// negotiation/transfer) is no longer passed by this client. Post the publicOrigin
-	// context change the platform reads it from the request context
-	// (HttpContextIdKeys.PublicOrigin = this node's DPI_NODE_PUBLIC_ORIGIN env), so the
-	// consumer node must set DPI_NODE_PUBLIC_ORIGIN to its docker-network address.
 	private readonly _logging: ILoggingComponent;
 
 	private readonly _dataspaceControlPlane: IDataspaceControlPlaneComponent;
@@ -44,6 +39,11 @@ export class ConsumerClient implements IConsumerClientComponent {
 	private readonly _trustComponent: ITrustComponent;
 
 	private readonly _federatedCatalogue: IFederatedCatalogueComponent;
+
+	// The registered type name of the data-plane REST client used to pull data from the provider.
+	// This is the engine instance type ("dataspace-data-plane-rest-client"), NOT the component-type
+	// enum value ("rest-client"); passing the enum to ComponentFactory.create throws factory.noCreate.
+	private readonly _dataspaceDataPlaneOfDataProviderComponentType: string;
 
 	/**
 	 * Create a new instance.
@@ -65,13 +65,16 @@ export class ConsumerClient implements IConsumerClientComponent {
 		this._federatedCatalogue = ComponentFactory.get<IFederatedCatalogueComponent>(
 			options?.federatedCatalogueComponentType ?? "federatedCatalogue"
 		);
+
+		this._dataspaceDataPlaneOfDataProviderComponentType =
+			options?.dataspaceDataPlaneOfDataProviderComponentType ?? "dataspace-data-plane-rest-client";
 	}
 
 	public className(): string {
 		return "ConsumerClient";
 	}
 
-	public async getData(agreementId: string, entityType: string): Promise<unknown> {
+	public async getData(dataRequest: IConsumerRequest): Promise<unknown> {
 		// eslint-disable-next-line no-async-promise-executor
 		return new Promise<unknown>(async (resolve, reject) => {
 			try {
@@ -83,7 +86,7 @@ export class ConsumerClient implements IConsumerClientComponent {
 
 				const token = await this._trustComponent.generate(consumerIdentity, undefined, {});
 
-				const { providerEndpoint } = await this.getDatasetDetails(entityType, token);
+				const { providerEndpoint } = await this.getDatasetDetails(dataRequest.entityType, token);
 
 				const format = DataspaceTransferFormat.HttpDataPull;
 
@@ -93,37 +96,50 @@ export class ConsumerClient implements IConsumerClientComponent {
 						consumerPid: string,
 						message: IDataspaceProtocolTransferStartMessage
 					) => {
-						await this._logging.log({
-							level: LogLevel.Debug,
-							message: `TransferProcess: ${consumerPid} Now started: channel: ${message.dataAddress?.endpoint}`,
-							source: this.className()
-						});
-						// Retrieve the data
-						const endpoint = message.dataAddress?.endpoint;
-						if (Is.undefined(endpoint)) {
-							reject(new Error(`No data address supplied for transfer process ${consumerPid}`));
-							return;
-						}
-						// The data-plane endpoint is the full channel URL and the access token is
-						// carried in its endpointProperties, so fetch it directly. (The
-						// DataspaceDataPlaneRestClient hardcodes a "dataspace-data-plane" base path
-						// that does not match 102's "/dataspace" data-plane mount, which would
-						// double the path and 404.)
-						const accessToken = message.dataAddress?.endpointProperties?.find(
-							property => property.name === "authorization"
-						)?.value;
-						const separator = endpoint.includes("?") ? "&" : "?";
-						const dataUrl = `${endpoint}${separator}consumerPid=${encodeURIComponent(
-							consumerPid
-						)}&type=${encodeURIComponent(entityType)}`;
-						const response = await fetch(dataUrl, {
-							headers: Is.stringValue(accessToken)
-								? { Authorization: `Bearer ${accessToken}` }
-								: {}
-						});
-						const entities = await response.json();
+						try {
+							await this._logging.log({
+								level: LogLevel.Debug,
+								message: `TransferProcess: ${consumerPid} Now started: channel: ${message.dataAddress?.endpoint}`,
+								source: this.className()
+							});
+							// Retrieve the data
+							const endpoint = message.dataAddress?.endpoint;
+							if (Is.undefined(endpoint)) {
+								reject(new Error(`No data address supplied for transfer process ${consumerPid}`));
+								return;
+							}
+							// pathPrefix:"" so the client treats the advertised channel as the data-plane base
+							// and only appends its own "/entities" route (and merges the endpoint's
+							// ?organization tenant-routing param). Without it the client would prepend its
+							// default "dataspace-data-plane" prefix and 404. Mirrors the remote control-plane
+							// create in dataspaceControlPlaneService.prepareTransfer.
+							const dataProviderDataPlane = ComponentFactory.create<IDataspaceDataPlaneComponent>(
+								this._dataspaceDataPlaneOfDataProviderComponentType,
+								{
+									endpoint,
+									pathPrefix: ""
+								}
+							);
+							const entities = await dataProviderDataPlane.getDataAssetEntities(
+								{
+									entityType: dataRequest.entityType,
+									entityId: dataRequest.entityId
+								},
+								consumerPid,
+								undefined,
+								undefined,
+								token
+							);
 
-						resolve(entities);
+							resolve(entities.itemList);
+						} catch (error) {
+							await this._logging.log({
+								level: LogLevel.Error,
+								source: this.className(),
+								message: `Error while handling "onStarted": ${JSON.stringify(error)}`
+							});
+							reject(error);
+						}
 					},
 					onStateChanged: async (
 						consumerPid: string,
@@ -140,20 +156,39 @@ export class ConsumerClient implements IConsumerClientComponent {
 
 					onSuspended: async (consumerPid: string, reason?: string) => {},
 
-					onTerminated: async (consumerPid: string, reason?: string) => {}
+					onTerminated: async (consumerPid: string, reason?: string) => {},
+
+					onFailed: async (consumerPid: string, reason: string) => {
+						await this._logging.log({
+							level: LogLevel.Error,
+							source: this.className(),
+							message: `Transfer Process: ${consumerPid} failed: ${reason}`
+						});
+						this._dataspaceControlPlane.unregisterTransferCallback(transferCallbackId);
+
+						reject(new Error(`Transfer Process: ${consumerPid} failed: ${reason}`));
+					},
+
+					onTimeout: async (consumerPid: string) => {
+						await this._logging.log({
+							level: LogLevel.Error,
+							source: this.className(),
+							message: `Transfer Process: ${consumerPid} timed out`
+						});
+						this._dataspaceControlPlane.unregisterTransferCallback(transferCallbackId);
+
+						reject(new Error(`Transfer Process: ${consumerPid} failed due to timeout`));
+					}
 				});
 
-				// Single-node 102: the (same) node mounts its dataspace control plane at
-				// "dataspace-control-plane" (the extension restPath), so the provider-facing
-				// transfer endpoint uses that. (The two-node Frontiers case uses "dataspace".)
 				const providerEndpointTransfer = new URL(providerEndpoint);
-				providerEndpointTransfer.pathname += "dataspace-control-plane";
+				providerEndpointTransfer.pathname += "dataspace";
 
 				// prepareTransfer no longer takes a consumer callback address; the platform
 				// reads it from the request context (HttpContextIdKeys.PublicOrigin =
 				// this node's DPI_NODE_PUBLIC_ORIGIN).
 				const transferResult = await this._dataspaceControlPlane.prepareTransfer(
-					agreementId,
+					dataRequest.agreementId,
 					providerEndpointTransfer.toString(),
 					format,
 					token
@@ -235,6 +270,15 @@ export class ConsumerClient implements IConsumerClientComponent {
 						this._dataspaceControlPlane.unregisterNegotiationCallback(negotiationCallbackId);
 
 						reject(new Error(`Negotiation: ${negotiationId} failed: ${reason}`));
+					},
+
+					onTimeout: async (negotiationId: string) => {
+						await this._logging.log({
+							level: LogLevel.Error,
+							source: this.className(),
+							message: `Negotiation: ${negotiationId} failed due to timeout`
+						});
+						reject(new Error(`Negotiation: ${negotiationId} timed out`));
 					}
 				});
 
@@ -258,7 +302,8 @@ export class ConsumerClient implements IConsumerClientComponent {
 				await this._logging.log({
 					level: LogLevel.Error,
 					source: this.className(),
-					message: `General Error in the service: ${JSON.stringify(error)}`
+					message: `General Error in the service: ${JSON.stringify(error)}`,
+					error: error as IError
 				});
 				reject(error);
 			}
@@ -285,12 +330,10 @@ export class ConsumerClient implements IConsumerClientComponent {
 		// Query the federated Catalogue
 		const catalogResponse = await this._federatedCatalogue.query(
 			[
-				/*
-					{
-						"@type": "FilterByExample",
-						"dcterms:type": this._DATASET_TYPE
-					}
-					*/
+				{
+					"@type": "FilterByMetadata",
+					"dcterms:type": datasetDataType
+				}
 			],
 			undefined,
 			undefined,
@@ -309,14 +352,10 @@ export class ConsumerClient implements IConsumerClientComponent {
 		let dataset: IDataspaceProtocolDataset | undefined;
 
 		if (Is.arrayValue(catalog.dataset)) {
-			dataset = ArrayHelper.fromObjectOrArray<IDataspaceProtocolDatasetBase>(
-				catalog.dataset
-			)[0] as IDataspaceProtocolDataset;
+			dataset = catalog.dataset[0] as IDataspaceProtocolDataset;
 		}
 		if (Is.arrayValue(catalog.catalog)) {
-			const catalogItem = ArrayHelper.fromObjectOrArray<IDataspaceProtocolCatalogBase>(
-				catalog.catalog
-			)[0];
+			const catalogItem = catalog.catalog[0];
 			if (!Is.arrayValue(catalogItem.dataset)) {
 				throw new Error(`Catalog query did not return any dataset: ${datasetDataType}`);
 			}

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0.
 
 import type { IComponent } from "@twin.org/core";
+import type { IConsumerRequest } from "./IConsumerRequest.js";
 
 /**
  * Consumer client component
@@ -9,11 +10,10 @@ import type { IComponent } from "@twin.org/core";
 export interface IConsumerClientComponent extends IComponent {
 	/**
 	 * Get data
-	 * @param agreementId agreementId
-	 * @param entityType The entity type
+	 * @param dataRequest the Data request.
 	 * @returns unknown
 	 */
-	getData(agreementId: string, entityType: string): Promise<unknown>;
+	getData(dataRequest: IConsumerRequest): Promise<unknown>;
 
 	/**
 	 * Negotiates over a dataset passing id as parameter.

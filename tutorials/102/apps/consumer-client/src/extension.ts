@@ -19,6 +19,7 @@ import {
 import { ConsumerClient } from "./consumerClient.js";
 import type { IConsumerClientComponent } from "./IConsumerClientComponent.js";
 import type { IConsumerClientConstructorOptions } from "./IConsumerClientConstructorOptions.js";
+import type { IConsumerRequest } from "./IConsumerRequest.js";
 
 /**
  * Initialise the  extension.
@@ -39,22 +40,20 @@ export async function extensionInitialise(
 		}
 	];
 
-	// Tutorial 102 is a SINGLE node: provider and consumer are tenants on the same node,
-	// so the federated catalogue is local. The in-process Service is the default; the
-	// remote RestClient is kept only as a non-default option (the two-node Frontiers case
-	// points it at the provider container, e.g. http://dpi.provider:3000).
 	nodeEngineConfig.types.federatedCatalogueComponent = [
+		{
+			type: FederatedCatalogueComponentType.RestClient,
+			options: {
+				// The consumer reads the PROVIDER node's federated catalogue across the
+				// docker network, so this is the provider container name.
+				endpoint: "http://host.docker.internal:3000"
+			},
+			features: ["remote"]
+		},
 		{
 			type: FederatedCatalogueComponentType.Service,
 			restPath: "federated-catalogue",
 			isDefault: true
-		},
-		{
-			type: FederatedCatalogueComponentType.RestClient,
-			options: {
-				endpoint: "http://host.docker.internal:3000"
-			},
-			features: ["remote"]
 		}
 	];
 
@@ -62,32 +61,31 @@ export async function extensionInitialise(
 		{
 			type: DataspaceControlPlaneComponentType.Service,
 			options: {
+				// callbackPath MUST match restPath below so the callbackAddress this consumer advertises
+				// (<publicOrigin>/<callbackPath>) points at its own control-plane mount; otherwise the
+				// provider POSTs transfer callbacks (e.g. the auto-start TransferStartMessage) to the wrong
+				// path and the consumer 404s.
+				//
+				// This config object REPLACES the env-built control-plane config, so dataPlanePath and
+				// autoStartTransfers must be forwarded here too. Without dataPlanePath, pull transfers fail
+				// with "pullTransfersNotSupported"; without autoStartTransfers=true the provider never
+				// auto-starts the transfer, so the automated consumer-client (Way 1) hangs waiting for
+				// onStarted. Set TWIN_DATASPACE_AUTO_START_TRANSFERS=false for the manual Postman/curl
+				// walkthrough (Way 2) so the explicit ".../start" returns the data address synchronously.
 				config: {
-					// This override REPLACES the env-built control-plane config, so the data
-					// plane path must be forwarded or pull transfers fail at startTransfer
-					// with "pullTransfersNotSupported".
+					callbackPath: "dataspace",
 					// eslint-disable-next-line no-restricted-syntax -- tutorial extension reads node env directly
-					dataPlanePath: process.env.TWIN_DATASPACE_DATA_PLANE_PATH ?? "dataspace/entities",
-					// The automated consumer-client getData() waits for the transfer to reach
-					// STARTED, so on single-node 102 the provider must auto-start it on request
-					// (the default). The manual Postman/curl DSP walkthrough instead drives the
-					// provider start step itself (transfer ".../start"), which needs auto-start
-					// OFF so that start returns the data address synchronously. Flip it per flow
-					// with TWIN_DATASPACE_AUTO_START_TRANSFERS=false plus a node restart.
+					dataPlanePath: process.env.TWIN_DATASPACE_DATA_PLANE_PATH ?? "dataspace",
 					// eslint-disable-next-line no-restricted-syntax -- tutorial extension reads node env directly
 					autoStartTransfers: process.env.TWIN_DATASPACE_AUTO_START_TRANSFERS !== "false"
 				}
 			},
-			restPath: "dataspace-control-plane",
+			restPath: "dataspace",
 			isDefault: true
 		},
 		{
 			type: DataspaceControlPlaneComponentType.RestClient,
-			options: {
-				// Default remote control-plane endpoint. Per-call the consumer overrides this
-				// with the providerEndpoint resolved from the catalogue. Single-node: same node.
-				endpoint: "http://host.docker.internal:3000"
-			},
+			options: {},
 			features: ["remote"],
 			isMultiInstance: true
 		}
@@ -130,7 +128,6 @@ export async function extensionInitialise(
 								"urn:dpi:consumer-profile": {
 									"@context": "https://schema.org",
 									"@type": "Organization"
-									// purpose: "data-consumption"
 								}
 							}
 						}
@@ -205,6 +202,14 @@ export function consumerClientInitialiser(
 						federatedCatalogueComponentType: engineCore.getRegisteredInstanceType(
 							"federatedCatalogueComponent",
 							["remote"]
+						),
+
+						// The provider's data plane is reached via the remote RestClient. Resolve its
+						// registered engine instance type ("dataspace-data-plane-rest-client") so getData's
+						// ComponentFactory.create uses the right name instead of the bare enum value.
+						dataspaceDataPlaneOfDataProviderComponentType: engineCore.getRegisteredInstanceType(
+							"dataspaceDataPlaneComponent",
+							["remote"]
 						)
 					},
 					createConfig.options
@@ -227,10 +232,7 @@ export function consumerClientInitialiser(
  * @returns The rest routes.
  */
 export function generateRestRoutes(baseRouteName: string, componentName: string): IRestRoute[] {
-	const consumerClientRoute: IRestRoute<
-		{ body: { agreementId: string; entityType: string } },
-		{ body: unknown }
-	> = {
+	const consumerClientRoute: IRestRoute<{ body: IConsumerRequest }, { body: unknown }> = {
 		operationId: "consumerClient",
 		summary: "Get Data",
 		method: "POST",
@@ -306,17 +308,15 @@ export async function negotiate(
  * @param componentName The name of the component to use in the routes.
  * @param request The request.
  * @param request.body The body string params.
- * @param request.body.agreementId The agreement id to fetch data for.
- * @param request.body.entityType The type of entity associated with the agreementId.
  * @returns The response object with additional http response properties.
  */
 export async function consumerGetData(
 	httpRequestContext: IHttpRequestContext,
 	componentName: string,
-	request: { body: { agreementId: string; entityType: string } }
+	request: { body: IConsumerRequest }
 ): Promise<{ body: unknown }> {
 	const component = ComponentFactory.get<IConsumerClientComponent>(componentName);
-	const result = await component.getData(request.body.agreementId, request.body.entityType);
+	const result = await component.getData(request.body);
 
 	return {
 		body: result
