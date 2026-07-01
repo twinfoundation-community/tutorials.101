@@ -18,7 +18,7 @@ import {
 	type IDataspaceApp,
 	type IProcessingGroupOptions
 } from "@twin.org/dataspace-models";
-import { ComparisonOperator, type IComparator } from "@twin.org/entity";
+import { ComparisonOperator, LogicalOperator, type IComparator } from "@twin.org/entity";
 import { LogLevel, type ILoggingComponent } from "@twin.org/logging-models";
 import { nameof } from "@twin.org/nameof";
 import { SchemaOrgContexts, SchemaOrgTypes } from "@twin.org/standards-schema-org";
@@ -208,7 +208,10 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 						});
 					}
 
-					const items = await this._auditableItemGraph.query(undefined, conditions);
+					const items = await this._auditableItemGraph.query(undefined, {
+						logicalOperator: LogicalOperator.Or,
+						conditions
+					});
 					const data = {
 						"@context": SchemaOrgContexts.Context,
 						type: SchemaOrgTypes.ItemList
@@ -234,7 +237,10 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 						}
 					];
 
-					const items = await this._auditableItemGraph.query(undefined, conditions);
+					const items = await this._auditableItemGraph.query(undefined, {
+						conditions,
+						logicalOperator: LogicalOperator.Or
+					});
 					const data = {
 						"@context": SchemaOrgContexts.Context,
 						type: SchemaOrgTypes.ItemList

@@ -186,7 +186,7 @@ export class ConsumerClient implements IConsumerClientComponent {
 
 				// prepareTransfer no longer takes a consumer callback address; the platform
 				// reads it from the request context (HttpContextIdKeys.PublicOrigin =
-				// this node's DPI_NODE_PUBLIC_ORIGIN).
+				// this node's NODE_PUBLIC_ORIGIN).
 				const transferResult = await this._dataspaceControlPlane.prepareTransfer(
 					dataRequest.agreementId,
 					providerEndpointTransfer.toString(),

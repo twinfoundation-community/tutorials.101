@@ -61,11 +61,11 @@ export async function extensionInitialise(
 		{
 			type: DataspaceControlPlaneComponentType.Service,
 			options: {
-				// callbackPath MUST match restPath below so the callbackAddress this consumer advertises
-				// (<publicOrigin>/<callbackPath>) points at its own control-plane mount; otherwise the
-				// provider POSTs transfer callbacks (e.g. the auto-start TransferStartMessage) to the wrong
-				// path and the consumer 404s.
-				config: { callbackPath: "dataspace" }
+				config: {
+					callbackPath: "dataspace",
+					dataPlanePath: envVars.dataspaceDataPlanePath ?? "dataspace",
+					autoStartTransfers: envVars.dataspaceAutoStartTransfers !== "false"
+				}
 			},
 			restPath: "dataspace",
 			isDefault: true
@@ -112,7 +112,7 @@ export async function extensionInitialise(
 						{
 							accessMode: "public",
 							objects: {
-								"urn:dpi:consumer-profile": {
+								"twin:consumer-profile": {
 									"@context": "https://schema.org",
 									"@type": "Organization"
 								}
