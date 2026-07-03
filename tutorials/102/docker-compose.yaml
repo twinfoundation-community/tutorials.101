@@ -45,8 +45,6 @@ services:
       - ../../common/.env.bootstrap-legacy:/app/.env.bootstrap-legacy
       - ./apps/dataspace-example-app:/app/node_modules/@twin-community.org/dataspace-example-app
       - ./apps/consumer-client:/app/node_modules/@twin-community.org/consumer-client
-      - ./tutorial-data/provider.json:/app/provider.json
-      - ./tutorial-data/consumer.json:/app/consumer.json
 volumes:
   mysql_data:
   twin_data:
