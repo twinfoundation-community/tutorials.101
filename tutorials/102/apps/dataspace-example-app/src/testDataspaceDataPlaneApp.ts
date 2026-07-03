@@ -7,7 +7,7 @@ import {
 	type IAuditableItemGraphVertex
 } from "@twin.org/auditable-item-graph-models";
 import { ContextIdHelper, ContextIdKeys, ContextIdStore } from "@twin.org/context";
-import { ArrayHelper, ComponentFactory, Guards, Is, ObjectHelper } from "@twin.org/core";
+import { ArrayHelper, ComponentFactory, Guards, Is } from "@twin.org/core";
 import { DataTypeHandlerFactory } from "@twin.org/data-core";
 import type { IJsonLdDocument, IJsonLdNodeObject } from "@twin.org/data-json-ld";
 import {
@@ -21,7 +21,6 @@ import {
 import { ComparisonOperator, LogicalOperator, type IComparator } from "@twin.org/entity";
 import { LogLevel, type ILoggingComponent } from "@twin.org/logging-models";
 import { nameof } from "@twin.org/nameof";
-import { SchemaOrgContexts, SchemaOrgTypes } from "@twin.org/standards-schema-org";
 import { UneceContexts, UneceTypes } from "@twin.org/standards-unece";
 import type { IActivityStreamsActivity } from "@twin.org/standards-w3c-activity-streams";
 import type { ITestAppConstructorOptions } from "./ITestAppConstructorOptions.js";
@@ -212,17 +211,13 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 						logicalOperator: LogicalOperator.Or,
 						conditions
 					});
-					const data = {
-						"@context": SchemaOrgContexts.Context,
-						type: SchemaOrgTypes.ItemList
-					};
+
 					const itemListElement: IJsonLdNodeObject[] = [];
 					for (const item of items.entries.itemListElement) {
 						if (item.annotationObject?.type === UneceTypes.Consignment) {
 							itemListElement.push(item.annotationObject);
 						}
 					}
-					ObjectHelper.propertySet(data, "itemListElement", itemListElement);
 					return { data: itemListElement };
 				}
 
@@ -241,15 +236,11 @@ export class TestDataspaceDataPlaneApp implements IDataspaceApp {
 						conditions,
 						logicalOperator: LogicalOperator.Or
 					});
-					const data = {
-						"@context": SchemaOrgContexts.Context,
-						type: SchemaOrgTypes.ItemList
-					};
+
 					const itemListElement: IJsonLdNodeObject[] = [];
 					for (const item of items.entries.itemListElement) {
 						itemListElement.push(item.annotationObject as IJsonLdNodeObject);
 					}
-					ObjectHelper.propertySet(data, "itemListElement", itemListElement);
 					return { data: itemListElement };
 				}
 

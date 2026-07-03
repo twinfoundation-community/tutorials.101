@@ -27,7 +27,7 @@ services:
       - ../../common/init:/docker-entrypoint-initdb.d
 
   twin-node:
-    image: twinfoundation/twin-node:0.9.1-next.2
+    image: twinfoundation/twin-node:0.9.1-next.6
     container_name: twin_node
     hostname: node
     depends_on:

@@ -108,6 +108,10 @@ export class ConsumerClient implements IConsumerClientComponent {
 								reject(new Error(`No data address supplied for transfer process ${consumerPid}`));
 								return;
 							}
+							const urlEndpoint = new URL(endpoint);
+							const components = urlEndpoint.pathname.split("/");
+							components.pop();
+							urlEndpoint.pathname = components.join("/");
 							// pathPrefix:"" so the client treats the advertised channel as the data-plane base
 							// and only appends its own "/entities" route (and merges the endpoint's
 							// ?organization tenant-routing param). Without it the client would prepend its
@@ -116,7 +120,7 @@ export class ConsumerClient implements IConsumerClientComponent {
 							const dataProviderDataPlane = ComponentFactory.create<IDataspaceDataPlaneComponent>(
 								this._dataspaceDataPlaneOfDataProviderComponentType,
 								{
-									endpoint,
+									endpoint: `${urlEndpoint.toString()}`,
 									pathPrefix: ""
 								}
 							);
