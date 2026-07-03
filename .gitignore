@@ -134,3 +134,5 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 .DS_Store
+
+102_test

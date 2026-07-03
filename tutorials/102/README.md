@@ -37,3 +37,7 @@ twin-node.sh bootstrap-legacy
 ## Tutorial data
 
 [Tutorial Data Link](./tutorial-data/data.md)
+
+## Reference of environment variables
+
+[https://next.twindev.org/docs/pkgs/node/docs/architecture/node-env-variables](https://next.twindev.org/docs/pkgs/node/docs/architecture/node-env-variables)
